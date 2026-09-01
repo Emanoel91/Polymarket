@@ -6,7 +6,7 @@ File:
 pages/1_🏠_Overview.py
 
 Purpose:
-    High-level overview of the Polymarket ecosystem.
+    High-level overview of the Polymarket prediction market ecosystem.
 
 Main data sources:
     - Gamma API
@@ -15,16 +15,28 @@ Main data sources:
 
 Main metrics:
     - Total Market Volume
-    - 24H Volume
-    - 7D Volume
-    - 30D Volume
+    - Open Interest
     - Active Markets
     - Closed Markets
     - Active Events
-    - Open Interest
+    - Closed Events
+    - Active Market Volume
+    - Active Event Volume
 
-The page is designed to be read-only and does not require
-authentication.
+Pagination:
+    Events and Markets are fetched using offset pagination.
+
+    The API is requested repeatedly with:
+        limit=100
+        offset=0
+        offset=100
+        offset=200
+        ...
+
+    Pagination stops when an empty response is returned.
+
+Authentication:
+    Not required for the read-only endpoints used here.
 """
 
 from __future__ import annotations
@@ -77,76 +89,232 @@ data_api = get_data_client()
 
 
 # ============================================================
-# CACHED API FUNCTIONS
+# PAGINATION FUNCTIONS
+# ============================================================
+
+def fetch_all_events(
+    gamma_client: GammaAPI,
+    batch_size: int = 100,
+    **filters,
+) -> list[dict]:
+    """
+    Fetch ALL events using offset pagination.
+
+    The function keeps increasing the offset until the API
+    returns an empty list.
+
+    Example:
+        offset=0
+        offset=100
+        offset=200
+        ...
+
+    Parameters
+    ----------
+    gamma_client:
+        GammaAPI client.
+
+    batch_size:
+        Number of records requested per API call.
+
+    filters:
+        Additional Gamma API filters.
+
+    Returns
+    -------
+    list[dict]
+        All events returned by the API.
+    """
+
+    all_events = []
+    offset = 0
+
+    while True:
+
+        batch = gamma_client.get_events(
+            limit=batch_size,
+            offset=offset,
+            **filters,
+        )
+
+        # --------------------------------------------------------
+        # Stop when API returns an empty response
+        # --------------------------------------------------------
+
+        if not batch:
+            break
+
+        # --------------------------------------------------------
+        # Safety check
+        # --------------------------------------------------------
+
+        if not isinstance(batch, list):
+            break
+
+        # --------------------------------------------------------
+        # Add current batch
+        # --------------------------------------------------------
+
+        all_events.extend(batch)
+
+        # --------------------------------------------------------
+        # Move to next page
+        # --------------------------------------------------------
+
+        offset += batch_size
+
+    return all_events
+
+
+def fetch_all_markets(
+    gamma_client: GammaAPI,
+    batch_size: int = 100,
+    **filters,
+) -> list[dict]:
+    """
+    Fetch ALL markets using offset pagination.
+
+    The function keeps increasing the offset until the API
+    returns an empty list.
+
+    Example:
+        offset=0
+        offset=100
+        offset=200
+        ...
+
+    Parameters
+    ----------
+    gamma_client:
+        GammaAPI client.
+
+    batch_size:
+        Number of records requested per API call.
+
+    filters:
+        Additional Gamma API filters.
+
+    Returns
+    -------
+    list[dict]
+        All markets returned by the API.
+    """
+
+    all_markets = []
+    offset = 0
+
+    while True:
+
+        batch = gamma_client.get_markets(
+            limit=batch_size,
+            offset=offset,
+            **filters,
+        )
+
+        # --------------------------------------------------------
+        # Stop when API returns an empty response
+        # --------------------------------------------------------
+
+        if not batch:
+            break
+
+        # --------------------------------------------------------
+        # Safety check
+        # --------------------------------------------------------
+
+        if not isinstance(batch, list):
+            break
+
+        # --------------------------------------------------------
+        # Add current batch
+        # --------------------------------------------------------
+
+        all_markets.extend(batch)
+
+        # --------------------------------------------------------
+        # Move to next page
+        # --------------------------------------------------------
+
+        offset += batch_size
+
+    return all_markets
+
+
+# ============================================================
+# CACHED PAGINATED DATA FUNCTIONS
 # ============================================================
 
 @st.cache_data(ttl=300)
-def fetch_active_events():
+def fetch_all_active_events():
     """
-    Fetch active events.
+    Fetch all active events.
 
     Cache:
         5 minutes
     """
 
-    return gamma.get_events(
+    return fetch_all_events(
+        gamma,
+        batch_size=100,
         active=True,
         closed=False,
         archived=False,
-        limit=100,
-        offset=0,
     )
 
 
 @st.cache_data(ttl=300)
-def fetch_closed_events():
+def fetch_all_closed_events():
     """
-    Fetch closed events.
+    Fetch all closed events.
 
     Cache:
         5 minutes
     """
 
-    return gamma.get_events(
+    return fetch_all_events(
+        gamma,
+        batch_size=100,
         closed=True,
-        limit=100,
-        offset=0,
     )
 
 
 @st.cache_data(ttl=300)
-def fetch_active_markets():
+def fetch_all_active_markets():
     """
-    Fetch active markets.
+    Fetch all active markets.
 
     Cache:
         5 minutes
     """
 
-    return gamma.get_markets(
+    return fetch_all_markets(
+        gamma,
+        batch_size=100,
         active=True,
         closed=False,
         archived=False,
-        limit=100,
-        offset=0,
     )
 
 
 @st.cache_data(ttl=300)
-def fetch_closed_markets():
+def fetch_all_closed_markets():
     """
-    Fetch closed markets.
+    Fetch all closed markets.
 
     Cache:
         5 minutes
     """
 
-    return gamma.get_markets(
+    return fetch_all_markets(
+        gamma,
+        batch_size=100,
         closed=True,
-        limit=100,
-        offset=0,
     )
 
+
+# ============================================================
+# OTHER CACHED API FUNCTIONS
+# ============================================================
 
 @st.cache_data(ttl=300)
 def fetch_open_interest():
@@ -170,7 +338,10 @@ def fetch_server_time():
 # HELPER FUNCTIONS
 # ============================================================
 
-def safe_float(value, default=0.0):
+def safe_float(
+    value,
+    default=0.0,
+):
     """
     Safely convert a value to float.
     """
@@ -180,11 +351,15 @@ def safe_float(value, default=0.0):
 
     try:
         return float(value)
+
     except (TypeError, ValueError):
         return default
 
 
-def safe_int(value, default=0):
+def safe_int(
+    value,
+    default=0,
+):
     """
     Safely convert a value to integer.
     """
@@ -194,56 +369,70 @@ def safe_int(value, default=0):
 
     try:
         return int(value)
+
     except (TypeError, ValueError):
         return default
 
 
 def format_usd(value):
     """
-    Format USD values for KPI cards.
+    Format USD values.
     """
 
     value = safe_float(value)
 
     if value >= 1_000_000_000:
-        return f"${value / 1_000_000_000:.2f}B"
+
+        return (
+            f"${value / 1_000_000_000:.2f}B"
+        )
 
     if value >= 1_000_000:
-        return f"${value / 1_000_000:.2f}M"
+
+        return (
+            f"${value / 1_000_000:.2f}M"
+        )
 
     if value >= 1_000:
-        return f"${value / 1_000:.2f}K"
+
+        return (
+            f"${value / 1_000:.2f}K"
+        )
 
     return f"${value:,.2f}"
 
 
 def format_number(value):
     """
-    Format integer/large number.
+    Format large numbers.
     """
 
     value = safe_float(value)
 
     if value >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.2f}B"
+
+        return (
+            f"{value / 1_000_000_000:.2f}B"
+        )
 
     if value >= 1_000_000:
-        return f"{value / 1_000_000:.2f}M"
+
+        return (
+            f"{value / 1_000_000:.2f}M"
+        )
 
     if value >= 1_000:
-        return f"{value / 1_000:.2f}K"
+
+        return (
+            f"{value / 1_000:.2f}K"
+        )
 
     return f"{value:,.0f}"
 
 
 def parse_json_field(value):
     """
-    Parse JSON strings returned by Gamma API.
-
-    Useful for fields such as:
-        outcomes
-        outcomePrices
-        clobTokenIds
+    Parse JSON string fields returned by Gamma.
     """
 
     if value is None:
@@ -256,7 +445,11 @@ def parse_json_field(value):
 
         try:
             return json.loads(value)
-        except (json.JSONDecodeError, TypeError):
+
+        except (
+            json.JSONDecodeError,
+            TypeError,
+        ):
             return []
 
     return []
@@ -277,7 +470,9 @@ def extract_event_volume(event):
 
         if field in event:
 
-            value = safe_float(event.get(field))
+            value = safe_float(
+                event.get(field)
+            )
 
             if value > 0:
                 return value
@@ -300,7 +495,9 @@ def extract_market_volume(market):
 
         if field in market:
 
-            value = safe_float(market.get(field))
+            value = safe_float(
+                market.get(field)
+            )
 
             if value > 0:
                 return value
@@ -323,7 +520,9 @@ def extract_liquidity(market):
 
         if field in market:
 
-            value = safe_float(market.get(field))
+            value = safe_float(
+                market.get(field)
+            )
 
             if value > 0:
                 return value
@@ -339,8 +538,9 @@ st.title("🏠 Polymarket Overview")
 
 st.markdown(
     """
-    High-level overview of the Polymarket prediction market ecosystem,
-    including market activity, volume, liquidity and open interest.
+    High-level overview of the Polymarket prediction market
+    ecosystem, including market activity, volume, liquidity
+    and open interest.
     """
 )
 
@@ -349,11 +549,16 @@ st.markdown(
 # LAST UPDATED
 # ============================================================
 
+server_time = None
+
 try:
 
     server_time = fetch_server_time()
 
-    if isinstance(server_time, (int, float)):
+    if isinstance(
+        server_time,
+        (int, float),
+    ):
 
         update_time = datetime.fromtimestamp(
             server_time,
@@ -362,15 +567,20 @@ try:
 
     else:
 
-        update_time = datetime.now(timezone.utc)
+        update_time = datetime.now(
+            timezone.utc
+        )
 
 except Exception:
 
-    update_time = datetime.now(timezone.utc)
+    update_time = datetime.now(
+        timezone.utc
+    )
 
 
 st.caption(
-    f"Data timestamp: {update_time.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+    "Data timestamp: "
+    f"{update_time.strftime('%Y-%m-%d %H:%M:%S UTC')}"
 )
 
 
@@ -378,63 +588,145 @@ st.caption(
 # LOAD DATA
 # ============================================================
 
-with st.spinner("Loading Polymarket data..."):
+with st.spinner(
+    "Loading all Polymarket events and markets..."
+):
+
+    # --------------------------------------------------------
+    # Events
+    # --------------------------------------------------------
 
     try:
-        active_events = fetch_active_events()
-    except Exception:
+
+        active_events = (
+            fetch_all_active_events()
+        )
+
+    except Exception as exc:
+
         active_events = []
 
+        st.warning(
+            f"Unable to load active events: {exc}"
+        )
+
     try:
-        closed_events = fetch_closed_events()
-    except Exception:
+
+        closed_events = (
+            fetch_all_closed_events()
+        )
+
+    except Exception as exc:
+
         closed_events = []
 
+        st.warning(
+            f"Unable to load closed events: {exc}"
+        )
+
+    # --------------------------------------------------------
+    # Markets
+    # --------------------------------------------------------
+
     try:
-        active_markets = fetch_active_markets()
-    except Exception:
+
+        active_markets = (
+            fetch_all_active_markets()
+        )
+
+    except Exception as exc:
+
         active_markets = []
 
-    try:
-        closed_markets = fetch_closed_markets()
-    except Exception:
-        closed_markets = []
+        st.warning(
+            f"Unable to load active markets: {exc}"
+        )
 
     try:
-        open_interest_raw = fetch_open_interest()
+
+        closed_markets = (
+            fetch_all_closed_markets()
+        )
+
+    except Exception as exc:
+
+        closed_markets = []
+
+        st.warning(
+            f"Unable to load closed markets: {exc}"
+        )
+
+    # --------------------------------------------------------
+    # Open Interest
+    # --------------------------------------------------------
+
+    try:
+
+        open_interest_raw = (
+            fetch_open_interest()
+        )
+
     except Exception:
+
         open_interest_raw = None
 
 
 # ============================================================
-# DATA NORMALIZATION
+# DATA VALIDATION
 # ============================================================
 
-if not isinstance(active_events, list):
+if not isinstance(
+    active_events,
+    list,
+):
     active_events = []
 
-if not isinstance(closed_events, list):
+
+if not isinstance(
+    closed_events,
+    list,
+):
     closed_events = []
 
-if not isinstance(active_markets, list):
+
+if not isinstance(
+    active_markets,
+    list,
+):
     active_markets = []
 
-if not isinstance(closed_markets, list):
+
+if not isinstance(
+    closed_markets,
+    list,
+):
     closed_markets = []
 
 
 # ============================================================
-# CALCULATE OVERVIEW METRICS
+# COUNTS
 # ============================================================
 
-active_event_count = len(active_events)
+active_event_count = len(
+    active_events
+)
 
-closed_event_count = len(closed_events)
+closed_event_count = len(
+    closed_events
+)
 
-active_market_count = len(active_markets)
+active_market_count = len(
+    active_markets
+)
 
-closed_market_count = len(closed_markets)
+closed_market_count = len(
+    closed_markets
+)
 
+
+# ============================================================
+# VOLUME CALCULATIONS
+# ============================================================
 
 active_market_volume = sum(
     extract_market_volume(market)
@@ -454,18 +746,39 @@ active_event_volume = sum(
 )
 
 
-# Prefer event-level volume when available
-# because events aggregate multiple markets.
+closed_event_volume = sum(
+    extract_event_volume(event)
+    for event in closed_events
+)
 
-if active_event_volume > 0:
 
-    estimated_total_volume = active_event_volume
+# ------------------------------------------------------------
+# Total volume
+# ------------------------------------------------------------
+
+total_event_volume = (
+    active_event_volume
+    + closed_event_volume
+)
+
+
+total_market_volume = (
+    active_market_volume
+    + closed_market_volume
+)
+
+
+# Prefer event-level aggregation when available.
+if total_event_volume > 0:
+
+    estimated_total_volume = (
+        total_event_volume
+    )
 
 else:
 
     estimated_total_volume = (
-        active_market_volume +
-        closed_market_volume
+        total_market_volume
     )
 
 
@@ -475,7 +788,11 @@ else:
 
 open_interest = 0.0
 
-if isinstance(open_interest_raw, dict):
+
+if isinstance(
+    open_interest_raw,
+    dict,
+):
 
     possible_fields = [
         "oi",
@@ -496,13 +813,20 @@ if isinstance(open_interest_raw, dict):
             if open_interest > 0:
                 break
 
-elif isinstance(open_interest_raw, list):
+
+elif isinstance(
+    open_interest_raw,
+    list,
+):
 
     values = []
 
     for item in open_interest_raw:
 
-        if not isinstance(item, dict):
+        if not isinstance(
+            item,
+            dict,
+        ):
             continue
 
         for field in [
@@ -515,12 +839,15 @@ elif isinstance(open_interest_raw, list):
             if field in item:
 
                 values.append(
-                    safe_float(item.get(field))
+                    safe_float(
+                        item.get(field)
+                    )
                 )
 
                 break
 
     open_interest = sum(values)
+
 
 else:
 
@@ -536,9 +863,9 @@ else:
 st.subheader("📊 Key Metrics")
 
 
-# ------------------------------------------------------------
-# Row 1
-# ------------------------------------------------------------
+# ============================================================
+# KPI ROW 1
+# ============================================================
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -583,9 +910,9 @@ with col4:
     )
 
 
-# ------------------------------------------------------------
-# Row 2
-# ------------------------------------------------------------
+# ============================================================
+# KPI ROW 2
+# ============================================================
 
 st.markdown("")
 
@@ -722,7 +1049,9 @@ with col2:
 
 st.divider()
 
-st.subheader("🔥 Top Active Markets by Volume")
+st.subheader(
+    "🔥 Top Active Markets by Volume"
+)
 
 
 top_markets = []
@@ -730,7 +1059,10 @@ top_markets = []
 
 for market in active_markets:
 
-    if not isinstance(market, dict):
+    if not isinstance(
+        market,
+        dict,
+    ):
         continue
 
     question = (
@@ -739,9 +1071,13 @@ for market in active_markets:
         or "Unknown Market"
     )
 
-    volume = extract_market_volume(market)
+    volume = extract_market_volume(
+        market
+    )
 
-    liquidity = extract_liquidity(market)
+    liquidity = extract_liquidity(
+        market
+    )
 
     spread = safe_float(
         market.get("spread")
@@ -766,7 +1102,9 @@ for market in active_markets:
 if top_markets:
 
     top_markets_df = (
-        pd.DataFrame(top_markets)
+        pd.DataFrame(
+            top_markets
+        )
         .sort_values(
             "Volume",
             ascending=False,
@@ -774,30 +1112,38 @@ if top_markets:
         .head(10)
     )
 
-    display_df = top_markets_df.copy()
-
-    display_df["Volume"] = display_df[
-        "Volume"
-    ].apply(format_usd)
-
-    display_df["Liquidity"] = display_df[
-        "Liquidity"
-    ].apply(format_usd)
-
-    display_df["Last Price"] = display_df[
-        "Last Price"
-    ].apply(
-        lambda x: f"{x:.3f}"
-        if x > 0
-        else "—"
+    display_df = (
+        top_markets_df.copy()
     )
 
-    display_df["Spread"] = display_df[
-        "Spread"
-    ].apply(
-        lambda x: f"{x:.3f}"
-        if x > 0
-        else "—"
+    display_df["Volume"] = (
+        display_df["Volume"]
+        .apply(format_usd)
+    )
+
+    display_df["Liquidity"] = (
+        display_df["Liquidity"]
+        .apply(format_usd)
+    )
+
+    display_df["Last Price"] = (
+        display_df["Last Price"]
+        .apply(
+            lambda x:
+                f"{x:.3f}"
+                if x > 0
+                else "—"
+        )
+    )
+
+    display_df["Spread"] = (
+        display_df["Spread"]
+        .apply(
+            lambda x:
+                f"{x:.3f}"
+                if x > 0
+                else "—"
+        )
     )
 
     st.dataframe(
@@ -820,7 +1166,9 @@ else:
 if top_markets:
 
     chart_df = (
-        pd.DataFrame(top_markets)
+        pd.DataFrame(
+            top_markets
+        )
         .sort_values(
             "Volume",
             ascending=True,
@@ -859,7 +1207,9 @@ if top_markets:
 
 st.divider()
 
-st.subheader("🌎 Top Active Events")
+st.subheader(
+    "🌎 Top Active Events"
+)
 
 
 top_events = []
@@ -867,7 +1217,10 @@ top_events = []
 
 for event in active_events:
 
-    if not isinstance(event, dict):
+    if not isinstance(
+        event,
+        dict,
+    ):
         continue
 
     title = (
@@ -876,9 +1229,14 @@ for event in active_events:
         or "Unknown Event"
     )
 
-    slug = event.get("slug", "")
+    slug = event.get(
+        "slug",
+        "",
+    )
 
-    volume = extract_event_volume(event)
+    volume = extract_event_volume(
+        event
+    )
 
     liquidity = safe_float(
         event.get("liquidity")
@@ -897,7 +1255,9 @@ for event in active_events:
 if top_events:
 
     top_events_df = (
-        pd.DataFrame(top_events)
+        pd.DataFrame(
+            top_events
+        )
         .sort_values(
             "Volume",
             ascending=False,
@@ -905,15 +1265,19 @@ if top_events:
         .head(10)
     )
 
-    display_events = top_events_df.copy()
+    display_events = (
+        top_events_df.copy()
+    )
 
-    display_events["Volume"] = display_events[
-        "Volume"
-    ].apply(format_usd)
+    display_events["Volume"] = (
+        display_events["Volume"]
+        .apply(format_usd)
+    )
 
-    display_events["Liquidity"] = display_events[
-        "Liquidity"
-    ].apply(format_usd)
+    display_events["Liquidity"] = (
+        display_events["Liquidity"]
+        .apply(format_usd)
+    )
 
     st.dataframe(
         display_events,
@@ -929,7 +1293,7 @@ else:
 
 
 # ============================================================
-# DATA QUALITY / API STATUS
+# API STATUS
 # ============================================================
 
 st.divider()
@@ -945,13 +1309,14 @@ with col1:
     if active_events:
 
         st.success(
-            "Gamma API ✓"
+            f"Gamma API ✓ — "
+            f"{format_number(active_event_count)} active events loaded"
         )
 
     else:
 
         st.warning(
-            "Gamma API — No data"
+            "Gamma API — No event data"
         )
 
 
