@@ -6,7 +6,7 @@ import plotly.express as px
 from datetime import datetime, timezone
 
 from api.gamma import GammaClient
-from api.clob import CLOBClient
+from api.clob import CLOBAPI
 from api.data_api import DataAPIClient
 
 
