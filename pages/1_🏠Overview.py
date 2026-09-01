@@ -32,7 +32,7 @@ def get_gamma_client():
 
 @st.cache_resource
 def get_clob_client():
-    return CLOBClient()
+    return CLOBAPI()
 
 
 @st.cache_resource
