@@ -1,27 +1,26 @@
 """
 Polymarket API package.
 
-Modules
--------
-gamma
-    Event, market, tag, series, sports and search APIs.
-
-clob
-    Prices, order books, spreads, price history and rewards.
-
-data_api
-    Wallet profiles, positions, activity, trades and leaderboard.
-
-ws_client
-    Real-time WebSocket market data client.
+Clients:
+- GammaClient
+- CLOBClient
+- DataAPIClient
+- WebSocketClient
 """
 
-from .gamma import GammaAPI
-from .clob import CLOBAPI
-from .data_api import DataAPI
+from .gamma import GammaClient
+from .clob import CLOBClient
+from .data_api import DataAPIClient
+
+try:
+    from .ws_client import WebSocketClient
+except ImportError:
+    WebSocketClient = None
+
 
 __all__ = [
-    "GammaAPI",
-    "CLOBAPI",
-    "DataAPI",
+    "GammaClient",
+    "CLOBClient",
+    "DataAPIClient",
+    "WebSocketClient",
 ]
