@@ -405,3 +405,6 @@ class CLOBAPI:
             "GET",
             f"/rewards/markets/{condition_id}",
         )
+
+
+CLOBClient = CLOBAPI
