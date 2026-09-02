@@ -90,8 +90,8 @@ data_api = get_data_client()
 # (larger = fewer round-trips). max_pages is left as a generous
 # safety net only, so it never truncates real data in practice.
 
-BATCH_SIZE = 500
-MAX_PAGES = 200  # safety net only: 500 * 200 = 100,000 rows max
+BATCH_SIZE = 100
+MAX_PAGES = 500  # safety net only: 100 * 500 = 50,000 rows max
 
 
 @st.cache_data(ttl=300)
@@ -394,30 +394,46 @@ st.caption(
 
 with st.spinner("Loading Polymarket data (fetching all pages)..."):
 
+    fetch_errors = []
+
     try:
         active_events = fetch_active_events()
-    except Exception:
+    except Exception as exc:
         active_events = []
+        fetch_errors.append(("Active events", exc))
 
     try:
         closed_events = fetch_closed_events()
-    except Exception:
+    except Exception as exc:
         closed_events = []
+        fetch_errors.append(("Closed events", exc))
 
     try:
         active_markets = fetch_active_markets()
-    except Exception:
+    except Exception as exc:
         active_markets = []
+        fetch_errors.append(("Active markets", exc))
 
     try:
         closed_markets = fetch_closed_markets()
-    except Exception:
+    except Exception as exc:
         closed_markets = []
+        fetch_errors.append(("Closed markets", exc))
 
     try:
         open_interest_raw = fetch_open_interest()
-    except Exception:
+    except Exception as exc:
         open_interest_raw = None
+        fetch_errors.append(("Open interest", exc))
+
+
+if fetch_errors:
+
+    for label, exc in fetch_errors:
+
+        st.error(
+            f"**{label}** failed to load: {exc}"
+        )
 
 
 # ============================================================
