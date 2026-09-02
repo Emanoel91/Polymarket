@@ -8,17 +8,32 @@ Features:
 - Robust HTTP error handling
 - Retry for transient errors
 - Detailed API error messages
-- Events pagination
-- Markets pagination
-- Offset-based pagination
+- Events pagination (offset-based, legacy)
+- Markets pagination (offset-based, legacy)
+- Events pagination (keyset/cursor-based, current)
+- Markets pagination (keyset/cursor-based, current)
 - Automatic response normalization
 - Support for common Gamma endpoints
+
+Note on pagination:
+    Polymarket has deprecated deep offset-based pagination on
+    /events and /markets. Beyond a shallow depth the API now
+    returns HTTP 422 with:
+
+        "offset too large, use /events/keyset for deeper pagination"
+
+    The offset-based get_all_events()/get_all_markets() helpers are
+    kept for backward compatibility (they still work for shallow
+    result sets), but new code that needs the FULL set of events or
+    markets should use get_all_events_keyset()/get_all_markets_keyset()
+    instead, which use the cursor-based /events/keyset and
+    /markets/keyset endpoints.
 """
 
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -122,7 +137,7 @@ class GammaClient:
     @staticmethod
     def _normalize_list_response(data: Any) -> List[Dict[str, Any]]:
         """
-        Normalize Gamma list responses.
+        Normalize Gamma list responses (legacy offset-based endpoints).
 
         Expected response:
             [
@@ -163,6 +178,58 @@ class GammaClient:
             "Unexpected Gamma API response format. "
             f"Expected a list but received: {type(data).__name__}"
         )
+
+    @staticmethod
+    def _normalize_keyset_response(
+        data: Any,
+        items_key: str,
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """
+        Normalize a keyset (cursor-based) list response.
+
+        Expected shape:
+            {
+                "events": [...],       # or "markets", per items_key
+                "next_cursor": "..."   # present only if more pages exist
+            }
+
+        Returns:
+            (items, next_cursor)
+        """
+
+        if not isinstance(data, dict):
+
+            raise GammaAPIError(
+                "Unexpected Gamma API keyset response format. "
+                f"Expected a dict but received: {type(data).__name__}"
+            )
+
+        items = data.get(items_key)
+
+        if not isinstance(items, list):
+
+            # Fall back to generic wrapper keys, just in case.
+            for key in ("data", "results", "items"):
+
+                value = data.get(key)
+
+                if isinstance(value, list):
+                    items = value
+                    break
+
+        if not isinstance(items, list):
+
+            raise GammaAPIError(
+                "Unexpected Gamma API keyset response format. "
+                f"Missing '{items_key}' list in response."
+            )
+
+        next_cursor = data.get("next_cursor")
+
+        if not next_cursor:
+            next_cursor = None
+
+        return items, next_cursor
 
     # ------------------------------------------------------------------
     # Generic GET
@@ -319,7 +386,7 @@ class GammaClient:
         )
 
     # ------------------------------------------------------------------
-    # Events
+    # Events (legacy, offset-based)
     # ------------------------------------------------------------------
 
     def get_events(
@@ -330,7 +397,12 @@ class GammaClient:
         **filters,
     ) -> List[Dict[str, Any]]:
         """
-        Get a single page of events.
+        Get a single page of events (legacy offset-based endpoint).
+
+        Note: the API now rejects large offsets with HTTP 422
+        ("offset too large, use /events/keyset for deeper pagination").
+        For fetching the FULL set of events, prefer
+        get_all_events_keyset() instead of get_all_events().
 
         Example:
             client.get_events(
@@ -369,7 +441,12 @@ class GammaClient:
         **filters,
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve all events using offset pagination.
+        Retrieve events using legacy offset pagination.
+
+        Deprecated for deep result sets: the API now rejects large
+        offsets with HTTP 422. Kept for backward compatibility with
+        shallow result sets. Prefer get_all_events_keyset() for
+        retrieving the complete set of events.
 
         Pagination stops when:
         - API returns an empty page
@@ -403,7 +480,99 @@ class GammaClient:
         return all_events
 
     # ------------------------------------------------------------------
-    # Markets
+    # Events (current, keyset/cursor-based)
+    # ------------------------------------------------------------------
+
+    def get_events_page_keyset(
+        self,
+        *,
+        limit: int = 100,
+        after_cursor: Optional[str] = None,
+        **filters,
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """
+        Get a single page of events via cursor-based pagination.
+
+        Returns:
+            (events, next_cursor) - next_cursor is None on the last page.
+        """
+
+        params: Dict[str, Any] = {"limit": limit}
+
+        if after_cursor:
+            params["after_cursor"] = after_cursor
+
+        params.update(
+            {
+                key: value
+                for key, value in filters.items()
+                if value is not None
+            }
+        )
+
+        response = self.get(
+            "/events/keyset",
+            params=params,
+        )
+
+        return self._normalize_keyset_response(response, "events")
+
+    def get_all_events_keyset(
+        self,
+        *,
+        batch_size: int = 100,
+        max_pages: Optional[int] = None,
+        **filters,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve ALL events using cursor-based (keyset) pagination.
+
+        This is the current, supported way to page deep into the
+        result set - the legacy offset-based get_all_events() is
+        rejected by the API past a shallow depth.
+
+        Pagination stops when:
+        - API returns an empty page
+        - API returns no next_cursor (last page reached)
+        - The same cursor is returned twice in a row (guards against
+          a stalled/misbehaving cursor rather than looping forever)
+        - max_pages is reached, if provided
+        """
+
+        all_events: List[Dict[str, Any]] = []
+        seen_cursors: set = set()
+
+        cursor: Optional[str] = None
+        page = 0
+
+        while True:
+
+            if max_pages is not None and page >= max_pages:
+                break
+
+            events, next_cursor = self.get_events_page_keyset(
+                limit=batch_size,
+                after_cursor=cursor,
+                **filters,
+            )
+
+            if not events:
+                break
+
+            all_events.extend(events)
+
+            page += 1
+
+            if not next_cursor or next_cursor in seen_cursors:
+                break
+
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
+        return all_events
+
+    # ------------------------------------------------------------------
+    # Markets (legacy, offset-based)
     # ------------------------------------------------------------------
 
     def get_markets(
@@ -414,7 +583,12 @@ class GammaClient:
         **filters,
     ) -> List[Dict[str, Any]]:
         """
-        Get a single page of markets.
+        Get a single page of markets (legacy offset-based endpoint).
+
+        Note: the API now rejects large offsets with HTTP 422
+        ("offset too large, use /markets/keyset for deeper pagination").
+        For fetching the FULL set of markets, prefer
+        get_all_markets_keyset() instead of get_all_markets().
         """
 
         params = {
@@ -445,7 +619,12 @@ class GammaClient:
         **filters,
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve all markets using offset pagination.
+        Retrieve markets using legacy offset pagination.
+
+        Deprecated for deep result sets: the API now rejects large
+        offsets with HTTP 422. Kept for backward compatibility with
+        shallow result sets. Prefer get_all_markets_keyset() for
+        retrieving the complete set of markets.
 
         Pagination stops when:
         - API returns an empty page
@@ -475,6 +654,100 @@ class GammaClient:
 
             page += 1
             offset += batch_size
+
+        return all_markets
+
+    # ------------------------------------------------------------------
+    # Markets (current, keyset/cursor-based)
+    # ------------------------------------------------------------------
+
+    def get_markets_page_keyset(
+        self,
+        *,
+        limit: int = 100,
+        after_cursor: Optional[str] = None,
+        **filters,
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """
+        Get a single page of markets via cursor-based pagination.
+
+        Note: the API currently caps `limit` at 100 for this endpoint.
+
+        Returns:
+            (markets, next_cursor) - next_cursor is None on the last page.
+        """
+
+        params: Dict[str, Any] = {"limit": limit}
+
+        if after_cursor:
+            params["after_cursor"] = after_cursor
+
+        params.update(
+            {
+                key: value
+                for key, value in filters.items()
+                if value is not None
+            }
+        )
+
+        response = self.get(
+            "/markets/keyset",
+            params=params,
+        )
+
+        return self._normalize_keyset_response(response, "markets")
+
+    def get_all_markets_keyset(
+        self,
+        *,
+        batch_size: int = 100,
+        max_pages: Optional[int] = None,
+        **filters,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve ALL markets using cursor-based (keyset) pagination.
+
+        This is the current, supported way to page deep into the
+        result set - the legacy offset-based get_all_markets() is
+        rejected by the API past a shallow depth.
+
+        Pagination stops when:
+        - API returns an empty page
+        - API returns no next_cursor (last page reached)
+        - The same cursor is returned twice in a row (guards against
+          a stalled/misbehaving cursor rather than looping forever)
+        - max_pages is reached, if provided
+        """
+
+        all_markets: List[Dict[str, Any]] = []
+        seen_cursors: set = set()
+
+        cursor: Optional[str] = None
+        page = 0
+
+        while True:
+
+            if max_pages is not None and page >= max_pages:
+                break
+
+            markets, next_cursor = self.get_markets_page_keyset(
+                limit=batch_size,
+                after_cursor=cursor,
+                **filters,
+            )
+
+            if not markets:
+                break
+
+            all_markets.extend(markets)
+
+            page += 1
+
+            if not next_cursor or next_cursor in seen_cursors:
+                break
+
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
 
         return all_markets
 
