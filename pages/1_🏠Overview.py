@@ -80,30 +80,32 @@ data_api = get_data_client()
 # CACHED API FUNCTIONS
 # ============================================================
 #
-# GammaClient already implements offset-based pagination via
-# get_all_events() / get_all_markets(), looping until the API
-# returns an empty page. We use those directly instead of the
-# single-page get_events()/get_markets() to fetch the FULL set,
-# not just one page of 100.
+# The legacy offset-based /events and /markets endpoints now
+# reject deep pagination with HTTP 422 ("offset too large, use
+# /events/keyset for deeper pagination"). We use the current,
+# supported cursor-based (keyset) endpoints via
+# get_all_events_keyset() / get_all_markets_keyset(), which page
+# through the FULL result set using next_cursor instead of offset.
 #
-# batch_size controls how many rows are requested per HTTP call
-# (larger = fewer round-trips). max_pages is left as a generous
-# safety net only, so it never truncates real data in practice.
+# batch_size controls how many rows are requested per HTTP call.
+# The API currently caps this at 100 for the keyset endpoints.
+# max_pages is left as a generous safety net only, so it never
+# truncates real data in practice.
 
-BATCH_SIZE = 100
+BATCH_SIZE = 100  # API-enforced max for the keyset endpoints
 MAX_PAGES = 500  # safety net only: 100 * 500 = 50,000 rows max
 
 
 @st.cache_data(ttl=300)
 def fetch_active_events():
     """
-    Fetch ALL active events (paginated).
+    Fetch ALL active events (cursor-based pagination).
 
     Cache:
         5 minutes
     """
 
-    return gamma.get_all_events(
+    return gamma.get_all_events_keyset(
         active=True,
         closed=False,
         archived=False,
@@ -115,13 +117,13 @@ def fetch_active_events():
 @st.cache_data(ttl=300)
 def fetch_closed_events():
     """
-    Fetch ALL closed events (paginated).
+    Fetch ALL closed events (cursor-based pagination).
 
     Cache:
         5 minutes
     """
 
-    return gamma.get_all_events(
+    return gamma.get_all_events_keyset(
         closed=True,
         batch_size=BATCH_SIZE,
         max_pages=MAX_PAGES,
@@ -131,13 +133,13 @@ def fetch_closed_events():
 @st.cache_data(ttl=300)
 def fetch_active_markets():
     """
-    Fetch ALL active markets (paginated).
+    Fetch ALL active markets (cursor-based pagination).
 
     Cache:
         5 minutes
     """
 
-    return gamma.get_all_markets(
+    return gamma.get_all_markets_keyset(
         active=True,
         closed=False,
         archived=False,
@@ -149,13 +151,13 @@ def fetch_active_markets():
 @st.cache_data(ttl=300)
 def fetch_closed_markets():
     """
-    Fetch ALL closed markets (paginated).
+    Fetch ALL closed markets (cursor-based pagination).
 
     Cache:
         5 minutes
     """
 
-    return gamma.get_all_markets(
+    return gamma.get_all_markets_keyset(
         closed=True,
         batch_size=BATCH_SIZE,
         max_pages=MAX_PAGES,
