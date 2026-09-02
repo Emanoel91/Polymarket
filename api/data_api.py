@@ -326,3 +326,14 @@ class DataAPI:
                 "user": wallet,
             },
         )
+
+
+# ----------------------------------------------------------------------
+# Alias expected by api/__init__.py:
+#     from .data_api import DataAPIClient
+#
+# The class above is named DataAPI; this alias keeps that public name
+# stable while satisfying the import in __init__.py (mirrors the same
+# CLOBClient = CLOBAPI alias already used at the bottom of clob.py).
+# ----------------------------------------------------------------------
+DataAPIClient = DataAPI
