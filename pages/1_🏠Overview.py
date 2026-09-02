@@ -36,7 +36,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from api.gamma import GammaAPI
+from api.gamma import GammaClient
 from api.clob import CLOBAPI
 from api.data_api import DataAPI
 
@@ -57,8 +57,8 @@ st.set_page_config(
 # ============================================================
 
 @st.cache_resource
-def get_gamma_client() -> GammaAPI:
-    return GammaAPI()
+def get_gamma_client() -> GammaClient:
+    return GammaClient()
 
 
 @st.cache_resource
@@ -77,67 +77,22 @@ data_api = get_data_client()
 
 
 # ============================================================
-# PAGINATION HELPERS
-# ============================================================
-#
-# The Gamma API paginates results via `limit` / `offset`.
-# These helpers keep requesting pages until the API returns
-# fewer rows than requested (i.e. the last page), so we end
-# up with the FULL set of markets / events instead of being
-# capped at a single page of 100.
-#
-# A generous PAGE_SIZE keeps the number of HTTP round-trips
-# low, and MAX_PAGES acts purely as a safety net against an
-# infinite loop (e.g. if an API bug kept returning full pages
-# forever) - it is set high enough that it should never be hit
-# in practice.
-
-PAGE_SIZE = 500
-MAX_PAGES = 200  # safety net only: 500 * 200 = 100,000 rows max
-
-
-def _paginate(fetch_page, page_size: int = PAGE_SIZE, max_pages: int = MAX_PAGES):
-    """
-    Generic pagination loop.
-
-    Args:
-        fetch_page: callable(limit, offset) -> list[dict]
-        page_size: number of rows requested per page
-        max_pages: safety cap on number of pages fetched
-
-    Returns:
-        list[dict]: concatenated results across all pages
-    """
-
-    all_rows: list = []
-    offset = 0
-
-    for _ in range(max_pages):
-
-        page = fetch_page(limit=page_size, offset=offset)
-
-        if not page:
-            break
-
-        if not isinstance(page, list):
-            # Unexpected shape - stop rather than looping forever.
-            break
-
-        all_rows.extend(page)
-
-        # If we got back fewer rows than we asked for, this
-        # was the last page.
-        if len(page) < page_size:
-            break
-
-        offset += page_size
-
-    return all_rows
-
-
-# ============================================================
 # CACHED API FUNCTIONS
 # ============================================================
+#
+# GammaClient already implements offset-based pagination via
+# get_all_events() / get_all_markets(), looping until the API
+# returns an empty page. We use those directly instead of the
+# single-page get_events()/get_markets() to fetch the FULL set,
+# not just one page of 100.
+#
+# batch_size controls how many rows are requested per HTTP call
+# (larger = fewer round-trips). max_pages is left as a generous
+# safety net only, so it never truncates real data in practice.
+
+BATCH_SIZE = 500
+MAX_PAGES = 200  # safety net only: 500 * 200 = 100,000 rows max
+
 
 @st.cache_data(ttl=300)
 def fetch_active_events():
@@ -148,14 +103,12 @@ def fetch_active_events():
         5 minutes
     """
 
-    return _paginate(
-        lambda limit, offset: gamma.get_events(
-            active=True,
-            closed=False,
-            archived=False,
-            limit=limit,
-            offset=offset,
-        )
+    return gamma.get_all_events(
+        active=True,
+        closed=False,
+        archived=False,
+        batch_size=BATCH_SIZE,
+        max_pages=MAX_PAGES,
     )
 
 
@@ -168,12 +121,10 @@ def fetch_closed_events():
         5 minutes
     """
 
-    return _paginate(
-        lambda limit, offset: gamma.get_events(
-            closed=True,
-            limit=limit,
-            offset=offset,
-        )
+    return gamma.get_all_events(
+        closed=True,
+        batch_size=BATCH_SIZE,
+        max_pages=MAX_PAGES,
     )
 
 
@@ -186,14 +137,12 @@ def fetch_active_markets():
         5 minutes
     """
 
-    return _paginate(
-        lambda limit, offset: gamma.get_markets(
-            active=True,
-            closed=False,
-            archived=False,
-            limit=limit,
-            offset=offset,
-        )
+    return gamma.get_all_markets(
+        active=True,
+        closed=False,
+        archived=False,
+        batch_size=BATCH_SIZE,
+        max_pages=MAX_PAGES,
     )
 
 
@@ -206,12 +155,10 @@ def fetch_closed_markets():
         5 minutes
     """
 
-    return _paginate(
-        lambda limit, offset: gamma.get_markets(
-            closed=True,
-            limit=limit,
-            offset=offset,
-        )
+    return gamma.get_all_markets(
+        closed=True,
+        batch_size=BATCH_SIZE,
+        max_pages=MAX_PAGES,
     )
 
 
